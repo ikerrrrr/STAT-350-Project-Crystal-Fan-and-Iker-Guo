@@ -1,0 +1,236 @@
+---
+title: "Project_STAT350_White"
+author: "Crystal Fan and Iker Guo"
+date: "29/09/2020"
+output:
+  word_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T,
+                      results = "hide")
+```
+
+```{r,message =FALSE}
+rm(list=ls())
+library(readr)
+library(carData)
+library(MASS)
+library(randomForest)
+library(caret)
+library(tidyverse)
+library(corrplot)
+library(car)
+```
+
+#read the data
+```{r,message =FALSE}
+winequality_white <- read_csv("winequality-white.csv")
+Data_white <- na.omit(winequality_white )
+train_size_white <- floor(2/3*nrow(Data_white))
+train_index_white <- sample(seq_len(nrow(Data_white)),size = train_size_white)
+Data_white_training <- Data_white[train_index_white,]
+Data_white_test <- Data_white[-train_index_white,]
+```
+
+#draw correlation graph
+```{r, fig.show='hide'}
+data.frame(summary(winequality_white))
+head(winequality_white)
+
+# Correlation panel
+panel.cor <- function(x, y){
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    r <- round(cor(x, y), digits=2)
+    txt <- r
+    cex.cor <- 0.8/strwidth(txt)
+    text(0.5,0.5,txt)
+}
+
+# Customize upper panel
+lower.panel<-function(x, y){
+  points(x,y, pch = 10)
+}
+
+# Create the plots
+pairs(winequality_white[,2:ncol(winequality_white)], upper.panel = panel.cor,lower.panel = lower.panel)
+G = cor(winequality_white)
+corrplot(G, method="ellipse")
+```
+
+#Start with the Ordinal Logistic Regression
+```{r}
+Check_p <- function (model){
+  summary_table <- coef(summary(model))
+  pval <- pnorm(abs(summary_table[, "t value"]),lower.tail = FALSE)* 2
+  summary_table <- cbind(summary_table, "p value" = round(pval,7))
+  summary_table 
+}
+
+Pred_OLR <- function (model,test_data) {
+  predict_matrix <- as.matrix(round(predict(model,test_data[,2:ncol(test_data)],type = "p"), 3))
+  Prediction <- NULL
+  for (i in 1:nrow(Data_white_test)){
+    Prediction[i] = which.max(predict_matrix[i,])+2
+  }
+  Prediction
+}
+
+Check_accurate_rate <- function (test_data,final_result) {
+  difference_matrix = final_result - test_data[,1]
+  count = 0
+  for (j in 1:nrow(difference_matrix)){
+    if (difference_matrix[j,] == 0){
+      count = count + 1
+    }
+  }
+  count/nrow(difference_matrix)
+}
+
+Data_white_test_OLR = Data_white_test
+Data_white_training_OLR = Data_white_training
+
+#Factorize the dependent variable and scale the variable
+Data_white_training_OLR$quality = factor(Data_white_training$quality, levels = c("3","4","5","6","7","8","9"),ordered = TRUE)
+OLR_white <- polr(formula = quality ~ ., data = Data_white_training_OLR, Hess = TRUE)
+Check_p(OLR_white)
+summary(OLR_white)
+
+# Prediction before reduction 
+OLR_check_white <- Pred_OLR(OLR_white,Data_white_test_OLR)
+paste("The accurate rate for Ordinal Logistic Regression Model is ",round(Check_accurate_rate(Data_white_test,OLR_check_white),5))
+
+R_sq_OLR = R2(Data_white_test$quality,OLR_check_white)
+RMSPE_OLR = RMSE(Data_white_test$quality,OLR_check_white)
+MAPE_OLR = MAE(Data_white_test$quality,OLR_check_white)
+print(c(R_sq_OLR,RMSPE_OLR/sd(Data_white_test$quality),MAPE_OLR))
+
+table(t(Data_white_test[,1]),OLR_check_white)
+
+# Remove the predictor
+# citric_acid, chlorides and total_sulfur_dioxide
+OLR_white_reduce <- polr(formula = quality ~ fixed_acidity+volatile_acidity+residual_sugar+free_sulfur_dioxide+density+pH +sulphates+alcohol , data = Data_white_training_OLR, Hess = TRUE)
+Check_p(OLR_white_reduce)
+summary(OLR_white_reduce)
+
+# Prediction After reduction
+OLR_check_white_reduced <- Pred_OLR(OLR_white_reduce,Data_white_test_OLR)
+Accurate_rate_white = Check_accurate_rate(Data_white_test,OLR_check_white_reduced) 
+paste("The accurate rate for Reduced Ordinal Logistic Regression Model is ",round(Check_accurate_rate(Data_white_test,OLR_check_white_reduced),5))
+
+R_sq_OLR_redu = R2(Data_white_test$quality,OLR_check_white_reduced)
+RMSPE_OLR_redu = RMSE(Data_white_test$quality,OLR_check_white_reduced)
+MAPE_OLR_redu = MAE(Data_white_test$quality,OLR_check_white_reduced)
+print(c(R_sq_OLR_redu,RMSPE_OLR_redu/sd(Data_white_test$quality),MAPE_OLR_redu))
+
+table(t(Data_white_test[,1]),OLR_check_white_reduced)
+```
+
+#Random forrest
+```{r}
+Data_white_training_RF <- Data_white_training
+Data_white_training_RF$quality <- as.factor(Data_white_training_RF$quality)
+Data_white_training_RF$quality = factor(Data_white_training_RF$quality, levels = c("3","4","5","6","7","8","9"),ordered = TRUE)
+
+Data_white_test_RF <- Data_white_test
+Data_white_test_RF$quality  = NA
+Data_white_test_RF$quality <- as.factor(Data_white_test_RF$quality)
+Data_white_test_RF$quality <- factor(Data_white_test_RF$quality, levels = c("3","4","5","6","7","8","9"),ordered = TRUE)
+
+#determine the number of loops
+n = 50
+
+#determine the ntree
+n_tree = 50
+
+for(i in 1:n)
+{
+  RF_white <- randomForest(quality~.,data = droplevels(Data_white_training_RF), ntree = n_tree, nPerm = 10,mtry = 4)
+  pred_RF_white <- predict(RF_white,Data_white_test_RF)
+  Data_white_test_RF <- cbind(Data_white_test_RF, as.data.frame(pred_RF_white))
+  colnames(Data_white_test_RF)[ncol(Data_white_test_RF)] <- paste0("Prediction",i)
+}
+
+#function to get mode of one row
+getmode <- function(v) 
+{
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+#get the predicted value
+RF_pred_white <- as.data.frame(Data_white_test_RF[,13:(13+n-1)])
+
+# get the mode of the predicted data
+RF_final_pred_white = NULL
+for(i in 1:nrow(RF_pred_white))
+{
+  RF_final_pred_white = c(RF_final_pred_white,as.numeric(getmode(as.vector(unlist(RF_pred_white[i,])))))
+}
+
+RF_check_white = as.matrix(RF_final_pred_white)
+
+paste("The accurate rate for Random Forrest Model is ",round(Check_accurate_rate(Data_white_test,RF_check_white),5))
+
+R_sq_RF = R2(Data_white_test$quality,RF_check_white)
+RMSPE_RF = RMSE(Data_white_test$quality,RF_check_white)
+MAPE_RF = MAE(Data_white_test$quality,RF_check_white)
+print(c(R_sq_RF,RMSPE_RF/sd(Data_white_test$quality),MAPE_RF))
+
+table(t(Data_white_test[,1]),RF_check_white)
+```
+
+# Stepwise
+```{r, fig.show='hide'}
+#stepwise selection
+
+LM_white_full = lm(formula = quality ~., data = Data_white_training) 
+LM_white_null = lm(formula = quality ~1, data = Data_white_training) 
+
+step(LM_white_null,data = Data_white_training,scope = list(upper = LM_white_full),direction = "both")
+
+# remove citric_acid, chlorides and total_sulfur_dioxide
+data_test_temp<- Data_white_training[-1281,]
+data_test_temp<- data_test_temp[-2430,]
+
+LM_step_white_test <- lm(formula = quality ~ alcohol + volatile_acidity + residual_sugar + density + sulphates + free_sulfur_dioxide + pH + fixed_acidity, data = data_test_temp)
+
+LM_step_white <- lm(formula = quality ~ alcohol + volatile_acidity + residual_sugar + density + sulphates + free_sulfur_dioxide + pH + fixed_acidity, data = Data_white_training)
+
+summary(LM_step_white_test)
+avPlots(LM_step_white_test)
+AIC(LM_step_white_test)
+
+summary(LM_step_white)
+avPlots(LM_step_white)
+AIC(LM_step_white)
+
+#Assumption check for the col-linearity 
+vif(LM_step_white_test)
+X_matrix_LM_step_white = as.matrix(data_test_temp[,-c(1,4,6,7)])
+XX_LM_step_white=t(X_matrix_LM_step_white)%*%X_matrix_LM_step_white
+lambda_LM_step_white = eigen(XX_LM_step_white)$values
+cond_number_LM_step_white=max(lambda_LM_step_white)/min(lambda_LM_step_white)
+indices_LM_step_white=max(lambda_LM_step_white)/lambda_LM_step_white
+
+plot(LM_step_white_test)
+
+#Prediction; Model check 
+LM_step_check_white = round(as.matrix(predict(LM_step_white,Data_white_test)),0)
+paste("The accurate rate for Step-Wise is ",round(Check_accurate_rate(Data_white_test,LM_step_check_white),5))
+
+LM_step_check_white_test = round(as.matrix(predict(LM_step_white_test,Data_white_test)),0)
+paste("The accurate rate for Step-Wise is ",round(Check_accurate_rate(Data_white_test,LM_step_check_white_test),5))
+
+RMSPE_LM_white = RMSE(Data_white_test$quality,LM_step_check_white_test)
+MAPE_LM_white = MAE(Data_white_test$quality,LM_step_check_white_test)
+print(c(RMSPE_LM_white/sd(Data_white_test$quality),MAPE_LM_white))
+
+table(t(Data_white_test[,1]),LM_step_check_white_test)
+```
+
+
+
+
+

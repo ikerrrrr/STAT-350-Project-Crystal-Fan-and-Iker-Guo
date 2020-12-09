@@ -1,0 +1,279 @@
+---
+title: "Cross Validation"
+author: "Crystal Fan and Iker Guo"
+date: "03/12/2020"
+output:
+  word_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T,
+                      results = "hide")
+```
+
+```{r,message =FALSE}
+rm(list=ls())
+library(readr)
+library(carData)
+library(MASS)
+library(randomForest)
+library(caret)
+library(tidyverse)
+library(corrplot)
+library(car)
+```
+
+```{r,message =FALSE}
+winequality_white <- read_csv("winequality-white.csv")
+Data_white <- na.omit(winequality_white )
+train_size_white <- floor(2/3*nrow(Data_white))
+```
+
+```{r,message =FALSE}
+winequality_red <- read_csv("winequality-red.csv")
+Data_red <- na.omit(winequality_red )
+train_size_red <- floor(2/3*nrow(Data_red))
+```
+
+```{r,message =FALSE}
+getmode <- function(v) 
+{
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+Check_accurate_rate <- function (test_data,final_result) {
+  difference_matrix = final_result - test_data[,1]
+  count = 0
+  for (j in 1:nrow(difference_matrix)){
+    if (difference_matrix[j,] == 0){
+      count = count + 1
+    }
+  }
+  count/nrow(difference_matrix)
+}
+
+#determine the number of loops
+n = 50
+
+#determine the ntree
+n_tree = 50
+
+#determine cross trail 
+n_cross = 10
+```
+
+```{r,message =FALSE}
+Ave_accurate_white = 0
+Ave_MSPE_white = 0
+Ave_MAPE_white = 0
+
+for (trail_white in 1:n_cross){
+  train_index_white <- sample(seq_len(nrow(Data_white)),size = train_size_white)
+  Data_white_training <- Data_white[train_index_white,]
+  Data_white_test <- Data_white[-train_index_white,]
+  Data_white_training_RF <- Data_white_training
+  Data_white_training_RF$quality <- as.factor(Data_white_training_RF$quality)
+  Data_white_training_RF$quality = factor(Data_white_training_RF$quality, levels = c("3","4","5","6","7","8","9"),ordered =  TRUE)
+  
+  Data_white_test_RF <- Data_white_test
+  Data_white_test_RF$quality  = NA
+  Data_white_test_RF$quality <- as.factor(Data_white_test_RF$quality)
+  Data_white_test_RF$quality <- factor(Data_white_test_RF$quality, levels = c("3","4","5","6","7","8","9"),ordered  = TRUE)  
+  
+  for(i in 1:n)
+  {
+    RF_white <- randomForest(quality~.,data = droplevels(Data_white_training_RF), ntree = n_tree, nPerm = 10,mtry = 4)
+    pred_RF_white <- predict(RF_white,Data_white_test_RF)
+    Data_white_test_RF <- cbind(Data_white_test_RF, as.data.frame(pred_RF_white))
+    colnames(Data_white_test_RF)[ncol(Data_white_test_RF)] <- paste0("Prediction",i)
+  }
+
+  RF_pred_white <- as.data.frame(Data_white_test_RF[,13:(13+n-1)])
+  
+  # get the mode of the predicted data
+  RF_final_pred_white = NULL
+  for(j in 1:nrow(RF_pred_white))
+  {
+    RF_final_pred_white = c(RF_final_pred_white,as.numeric(getmode(as.vector(unlist(RF_pred_white[j,])))))
+  }
+  
+  RF_check_white = as.matrix(RF_final_pred_white)
+
+  RMSPE_RF = RMSE(Data_white_test$quality,RF_check_white)
+  MAPE_RF = MAE(Data_white_test$quality,RF_check_white)
+  
+  Ave_accurate_white = Ave_accurate_white + round(Check_accurate_rate(Data_white_test,RF_check_white),5)
+  Ave_MSPE_white = Ave_MSPE_white + RMSPE_RF/sd(Data_white_test$quality)
+  Ave_MAPE_white = Ave_MAPE_white + MAPE_RF 
+  
+  print(paste("Trail",trail_white,"The accurate rate for Random Forrest Model is ",round(Check_accurate_rate(Data_white_test,RF_check_white),5),"The MSPE/Sd and MAPE are ",round(RMSPE_RF/sd(Data_white_test$quality),5)," and ",round(MAPE_RF,5)))
+}
+
+print(paste("The average accurate rate, average MSPE/Sd and average MAPE are ",round(Ave_accurate_white/n_cross,5),round(Ave_MSPE_white/n_cross,5)," and ",round(Ave_MAPE_white/n_cross,5)))
+```
+
+```{r,message =FALSE}
+Add_point_white <- c(1,6,0.3,0.2,10,0.06,30,200,0.99,3,0.4,12)
+Ave_accurate_white_add = 0
+Ave_MSPE_white_add = 0
+Ave_MAPE_white_add = 0
+
+for (trail_white_add in 1:10){
+  train_index_white <- sample(seq_len(nrow(Data_white)),size = train_size_white)
+  Data_white_training_add <- data.frame(rbind(Data_white[train_index_white,],Add_point_white))
+  
+  Data_white_test <- Data_white[-train_index_white,]
+  Data_white_training_RF_add <- Data_white_training_add
+  Data_white_training_RF_add$quality <- as.factor(Data_white_training_RF_add$quality)
+  Data_white_training_RF_add$quality = factor(Data_white_training_RF_add$quality, levels = c("1","2","3","4","5","6","7","8","9"),ordered = TRUE)
+    
+  Data_white_test_RF <- Data_white_test
+  Data_white_test_RF$quality  = NA
+  Data_white_test_RF$quality <- as.factor(Data_white_test_RF$quality)
+  Data_white_test_RF$quality <- factor(Data_white_test_RF$quality, levels = c("1","2","3","4","5","6","7","8","9"),ordered = TRUE)  
+    
+  for(i in 1:n)
+  {
+      RF_white <- randomForest(quality~.,data = droplevels(Data_white_training_RF_add), ntree = n_tree, nPerm = 10,mtry = 4)
+      pred_RF_white <- predict(RF_white,Data_white_test_RF)
+      Data_white_test_RF <- cbind(Data_white_test_RF, as.data.frame(pred_RF_white))
+      colnames(Data_white_test_RF)[ncol(Data_white_test_RF)] <- paste0("Prediction",i)
+  }
+  
+  RF_pred_white <- as.data.frame(Data_white_test_RF[,13:(13+n-1)])
+    
+  # get the mode of the predicted data
+  RF_final_pred_white = NULL
+  for(j in 1:nrow(RF_pred_white))
+    {
+      RF_final_pred_white = c(RF_final_pred_white,as.numeric(getmode(as.vector(unlist(RF_pred_white[j,])))))
+  }
+    
+  RF_check_white = as.matrix(RF_final_pred_white)
+  
+  RMSPE_RF = RMSE(Data_white_test$quality,RF_check_white)
+  MAPE_RF = MAE(Data_white_test$quality,RF_check_white)
+  
+  Ave_accurate_white_add = Ave_accurate_white_add + round(Check_accurate_rate(Data_white_test,RF_check_white),5)
+  Ave_MSPE_white_add = Ave_MSPE_white_add + RMSPE_RF/sd(Data_white_test$quality)
+  Ave_MAPE_white_add = Ave_MAPE_white_add + MAPE_RF 
+    
+  print(paste("Trail",trail_white_add,"The accurate rate for Random Forrest Model after adding the point is ",round(Check_accurate_rate(Data_white_test,RF_check_white),5),"The MSPE/Sd and MAPE are ",round(RMSPE_RF/sd(Data_white_test$quality),5)," and ",round(MAPE_RF,5)))
+}
+
+print(paste("The average accurate rate, average MSPE/Sd and average MAPE after adding point are ",round(Ave_accurate_white_add/n_cross,5),round(Ave_MSPE_white_add/n_cross,5)," and ",round(Ave_MAPE_white_add/n_cross,5)))
+```
+
+```{r,message =FALSE}
+Ave_accurate_red = 0
+Ave_MSPE_red = 0
+Ave_MAPE_red = 0
+
+for (trail_red in 1:n_cross){
+  train_index_red <- sample(seq_len(nrow(Data_red)),size = train_size_red)
+  Data_red_training <- Data_red[train_index_red,]
+  Data_red_test <- Data_red[-train_index_red,]
+  Data_red_training_RF <- Data_red_training
+  Data_red_training_RF$quality <- as.factor(Data_red_training_RF$quality)
+  Data_red_training_RF$quality = factor(Data_red_training_RF$quality, levels = c("3","4","5","6","7","8","9"),ordered = TRUE)
+  
+  Data_red_test_RF <- Data_red_test
+  Data_red_test_RF$quality  = NA
+  Data_red_test_RF$quality <- as.factor(Data_red_test_RF$quality)
+  Data_red_test_RF$quality <- factor(Data_red_test_RF$quality, levels = c("3","4","5","6","7","8","9"),ordered = TRUE)  
+  
+  for(i in 1:n)
+  {
+    RF_red <- randomForest(quality~.,data = droplevels(Data_red_training_RF), ntree = n_tree, nPerm = 10,mtry = 4)
+    pred_RF_red <- predict(RF_red,Data_red_test_RF)
+    Data_red_test_RF <- cbind(Data_red_test_RF, as.data.frame(pred_RF_red))
+    colnames(Data_red_test_RF)[ncol(Data_red_test_RF)] <- paste0("Prediction",i)
+  }
+
+  RF_pred_red <- as.data.frame(Data_red_test_RF[,13:(13+n-1)])
+  
+  # get the mode of the predicted data
+  RF_final_pred_red = NULL
+  for(j in 1:nrow(RF_pred_red))
+  {
+    RF_final_pred_red = c(RF_final_pred_red,as.numeric(getmode(as.vector(unlist(RF_pred_red[j,])))))
+  }
+  
+  RF_check_red = as.matrix(RF_final_pred_red)
+
+  RMSPE_RF = RMSE(Data_red_test$quality,RF_check_red)
+  MAPE_RF = MAE(Data_red_test$quality,RF_check_red)
+  
+  Ave_accurate_red = Ave_accurate_red + round(Check_accurate_rate(Data_red_test,RF_check_red),5)
+  Ave_MSPE_red = Ave_MSPE_red + RMSPE_RF/sd(Data_red_test$quality)
+  Ave_MAPE_red = Ave_MAPE_red + MAPE_RF 
+  
+  print(paste("Trail",trail_red,"The accurate rate for Random Forrest Model is ",round(Check_accurate_rate(Data_red_test,RF_check_red),5),"The MSPE/Sd and MAPE are ",round(RMSPE_RF/sd(Data_red_test$quality),5)," and ",round(MAPE_RF,5)))
+}
+
+print(paste("The average accurate rate, average MSPE/Sd and average MAPE are ",round(Ave_accurate_red/n_cross,5),round(Ave_MSPE_red/n_cross,5)," and ",round(Ave_MAPE_red/n_cross,5)))
+```
+
+```{r,message =FALSE}
+Add_point_red <- c(1, 4, 0.90, 0.20, 1.8, 0.8, 14, 48, 0.99, 3, 0.4, 9.50)
+Ave_accurate_red_add = 0
+Ave_MSPE_red_add = 0
+Ave_MAPE_red_add = 0
+
+for (trail_red_add in 1:10){
+  train_index_red <- sample(seq_len(nrow(Data_red)),size = train_size_red)
+  Data_red_training_add <- data.frame(rbind(Data_red[train_index_red,],Add_point_red))
+  
+  Data_red_test <- Data_red[-train_index_red,]
+  Data_red_training_RF_add <- Data_red_training_add
+  Data_red_training_RF_add$quality <- as.factor(Data_red_training_RF_add$quality)
+  Data_red_training_RF_add$quality = factor(Data_red_training_RF_add$quality, levels = c("1","2","3","4","5","6","7","8","9"),ordered = TRUE)
+    
+  Data_red_test_RF <- Data_red_test
+  Data_red_test_RF$quality  = NA
+  Data_red_test_RF$quality <- as.factor(Data_red_test_RF$quality)
+  Data_red_test_RF$quality <- factor(Data_red_test_RF$quality, levels = c("1","2","3","4","5","6","7","8","9"),ordered = TRUE)  
+    
+  for(i in 1:n)
+  {
+    RF_red <- randomForest(quality~.,data = droplevels(Data_red_training_RF_add), ntree = n_tree, nPerm = 10,mtry = 4)
+    pred_RF_red <- predict(RF_red,Data_red_test_RF)
+    Data_red_test_RF <- cbind(Data_red_test_RF, as.data.frame(pred_RF_red))
+    colnames(Data_red_test_RF)[ncol(Data_red_test_RF)] <- paste0("Prediction",i)
+  }
+  
+  RF_pred_red <- as.data.frame(Data_red_test_RF[,13:(13+n-1)])
+    
+  # get the mode of the predicted data
+  RF_final_pred_red = NULL
+  for(j in 1:nrow(RF_pred_red))
+  {
+    RF_final_pred_red = c(RF_final_pred_red,as.numeric(getmode(as.vector(unlist(RF_pred_red[j,])))))
+  }
+    
+  RF_check_red = as.matrix(RF_final_pred_red)
+  
+  RMSPE_RF = RMSE(Data_red_test$quality,RF_check_red)
+  MAPE_RF = MAE(Data_red_test$quality,RF_check_red)
+  
+  Ave_accurate_red_add = Ave_accurate_red_add + round(Check_accurate_rate(Data_red_test,RF_check_red),5)
+  Ave_MSPE_red_add = Ave_MSPE_red_add + RMSPE_RF/sd(Data_red_test$quality)
+  Ave_MAPE_red_add = Ave_MAPE_red_add + MAPE_RF 
+    
+  print(paste("Trail",trail_red_add,"The accurate rate for Random Forrest Model after adding the point is ",round(Check_accurate_rate(Data_red_test,RF_check_red),5),"The MSPE/Sd and MAPE are ",round(RMSPE_RF/sd(Data_red_test$quality),5)," and ",round(MAPE_RF,5)))   
+}
+
+print(paste("The average accurate rate, average MSPE/Sd and average MAPE after adding point are ",round(Ave_accurate_red_add/n_cross,5),round(Ave_MSPE_red_add/n_cross,5)," and ",round(Ave_MAPE_red_add/n_cross,5)))
+```
+
+```{r, fig.show='hide'}
+winequality_white_rf <- winequality_white
+winequality_white_rf$quality = factor(winequality_white_rf$quality, levels = c("3","4","5","6","7","8","9"),ordered = TRUE)
+
+rf_import <- randomForest(quality~.,winequality_white_rf,mtry=4, importance=TRUE,ntree=10)
+
+importance(rf_import)
+varImpPlot(rf_import,2)
+```
+
