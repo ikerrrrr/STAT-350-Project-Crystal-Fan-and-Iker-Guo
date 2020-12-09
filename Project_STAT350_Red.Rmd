@@ -1,0 +1,219 @@
+---
+title: "Project_STAT350_Red"
+author: "Crystal Fan and Iker Guo"
+date: "29/09/2020"
+output:
+  word_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T,
+                      results = "hide")
+```
+
+```{r,message =FALSE}
+rm(list=ls())
+library(readr)
+library(carData)
+library(MASS)
+library(randomForest)
+library(caret)
+library(tidyverse)
+library(corrplot)
+library(car)
+```
+
+#read the data
+```{r,message =FALSE}
+winequality_red <- read_csv("winequality-red.csv")
+Data_red <- na.omit(winequality_red )
+train_size_red <- floor(2/3*nrow(Data_red))
+train_index_red <- sample(seq_len(nrow(Data_red)),size = train_size_red)
+Data_red_training <- Data_red[train_index_red,]
+Data_red_test <- Data_red[-train_index_red,]
+```
+
+#draw correlation graph
+```{r, fig.show='hide'}
+summary(winequality_red)
+head(winequality_red)
+
+# Correlation panel
+panel.cor <- function(x, y){
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    r <- round(cor(x, y), digits=2)
+    txt <- r
+    cex.cor <- 0.8/strwidth(txt)
+    text(0.5,0.5,txt)
+}
+
+# Customize upper panel
+lower.panel<-function(x, y){
+  points(x,y, pch = 10)
+}
+
+# Create the plots
+pairs(winequality_red[,2:ncol(winequality_red)], upper.panel = panel.cor,lower.panel = lower.panel)
+G = cor(winequality_red)
+corrplot(G, method="ellipse")
+```
+
+#Start with the Ordinal Logistic Regression
+```{r}
+Check_p <- function (model){
+  summary_table <- coef(summary(model))
+  pval <- pnorm(abs(summary_table[, "t value"]),lower.tail = FALSE)* 2
+  summary_table <- cbind(summary_table, "p value" = round(pval,7))
+  summary_table 
+}
+
+Pred_OLR <- function (model,test_data) {
+  predict_matrix <- as.matrix(round(predict(model,test_data[,2:ncol(test_data)],type = "p"), 3))
+  Prediction <- NULL
+  for (i in 1:nrow(Data_red_test)){
+    Prediction[i] = which.max(predict_matrix[i,])+2
+  }
+  Prediction
+}
+
+Check_accurate_rate <- function (test_data,final_result) {
+  difference_matrix = final_result - test_data[,1]
+  count = 0
+  for (j in 1:nrow(difference_matrix)){
+    if (difference_matrix[j,] == 0){
+      count = count + 1
+    }
+  }
+  count/nrow(difference_matrix)
+}
+
+Data_red_test_OLR = Data_red_test
+Data_red_training_OLR = Data_red_training
+
+#Factorize the dependent variable and scale the variable
+Data_red_training_OLR$quality = factor(Data_red_training$quality, levels = c("3","4","5","6","7","8"),ordered = TRUE)
+OLR_red <- polr(formula = quality ~ ., data = Data_red_training_OLR, Hess = TRUE)
+Check_p(OLR_red)
+summary(OLR_red)
+
+# Prediction before reduction 
+OLR_check_red <- Pred_OLR(OLR_red,Data_red_test_OLR)
+paste("The accurate rate for Ordinal Logistic Regression Model is ",round(Check_accurate_rate(Data_red_test,OLR_check_red),5))
+
+R_sq_OLR = R2(Data_red_test$quality,OLR_check_red)
+RMSPE_OLR = RMSE(Data_red_test$quality,OLR_check_red)
+MAPE_OLR = MAE(Data_red_test$quality,OLR_check_red)
+print(c(R_sq_OLR,RMSPE_OLR/sd(Data_red_test$quality),MAPE_OLR))
+
+table(t(Data_red_test[,1]),OLR_check_red)
+
+# Remove the predictor
+# fixed acidity, citric acid, residual sugar and free sulfur dioxide
+OLR_red_reduce <- polr(formula = quality ~ volatile_acidity+total_sulfur_dioxide+chlorides+density+pH +sulphates+alcohol , data = Data_red_training_OLR, Hess = TRUE)
+Check_p(OLR_red_reduce)
+summary(OLR_red_reduce)
+
+# Prediction After reduction
+OLR_check_red_reduced <- Pred_OLR(OLR_red_reduce,Data_red_test_OLR)
+Accurate_rate_red = Check_accurate_rate(Data_red_test,OLR_check_red_reduced) 
+paste("The accurate rate for Reduced Ordinal Logistic Regression Model is ",round(Check_accurate_rate(Data_red_test,OLR_check_red_reduced),5))
+
+RMSPE_OLR_redu = RMSE(Data_red_test$quality,OLR_check_red_reduced)
+MAPE_OLR_redu = MAE(Data_red_test$quality,OLR_check_red_reduced)
+print(c(RMSPE_OLR_redu/sd(Data_red_test$quality),MAPE_OLR_redu))
+
+table(t(Data_red_test[,1]),OLR_check_red_reduced)
+```
+
+#Random forrest
+```{r}
+Data_red_training_RF <- Data_red_training
+Data_red_training_RF$quality <- as.factor(Data_red_training_RF$quality)
+Data_red_training_RF$quality = factor(Data_red_training_RF$quality, levels = c("3","4","5","6","7","8"),ordered = TRUE)
+
+Data_red_test_RF <- Data_red_test
+Data_red_test_RF$quality  = NA
+Data_red_test_RF$quality <- as.factor(Data_red_test_RF$quality)
+Data_red_test_RF$quality <- factor(Data_red_test_RF$quality, levels = c("3","4","5","6","7","8"),ordered = TRUE)
+
+#determine the number of loops
+n = 50
+
+#determine the ntree
+n_tree = 50
+
+for(i in 1:n)
+{
+  RF_red <- randomForest(quality~.,data = droplevels(Data_red_training_RF), ntree = n_tree, nPerm = 10,mtry = 4)
+  pred_RF_red <- predict(RF_red,Data_red_test_RF)
+  Data_red_test_RF <- cbind(Data_red_test_RF, as.data.frame(pred_RF_red))
+  colnames(Data_red_test_RF)[ncol(Data_red_test_RF)] <- paste0("Prediction",i)
+}
+
+#function to get mode of one row
+getmode <- function(v) 
+{
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+#get the predicted value
+RF_pred_red <- as.data.frame(Data_red_test_RF[,13:(13+n-1)])
+
+# get the mode of the predicted data
+RF_final_pred_red = NULL
+for(i in 1:nrow(RF_pred_red))
+{
+  RF_final_pred_red = c(RF_final_pred_red,as.numeric(getmode(as.vector(unlist(RF_pred_red[i,])))))
+}
+
+RF_check_red = as.matrix(RF_final_pred_red)
+
+paste("The accurate rate for Random Forrest Model is ",round(Check_accurate_rate(Data_red_test,RF_check_red),5))
+
+R_sq_RF = R2(Data_red_test$quality,RF_check_red)
+RMSPE_RF = RMSE(Data_red_test$quality,RF_check_red)
+MAPE_RF = MAE(Data_red_test$quality,RF_check_red)
+print(c(R_sq_RF,RMSPE_RF/sd(Data_red_test$quality),MAPE_RF))
+
+table(t(Data_red_test[,1]),RF_check_red)
+
+```
+
+# Stepwise
+```{r, fig.show='hide'}
+#stepwise selection
+LM_red_full = lm(formula = quality ~., data = Data_red_training) 
+LM_red_null = lm(formula = quality ~1, data = Data_red_training) 
+
+step(LM_red_null,data = Data_red_training,scope = list(upper = LM_red_full),direction = "both")
+
+# fixed acidity, citric acid, residual sugar and density  
+LM_step_red <- lm(formula = quality ~ volatile_acidity+total_sulfur_dioxide+chlorides+free_sulfur_dioxide+pH +sulphates+alcohol, data = Data_red_training)
+
+avPlots(LM_step_red)
+
+#Assumption check for the col-linearity 
+vif(LM_step_red)
+X_matrix_LM_step_red = as.matrix(Data_red_training[,-c(1,4,6,7)])
+XX_LM_step_red=t(X_matrix_LM_step_red)%*%X_matrix_LM_step_red
+lambda_LM_step_red = eigen(XX_LM_step_red)$values
+cond_number_LM_step_red=max(lambda_LM_step_red)/min(lambda_LM_step_red)
+indices_LM_step_red=max(lambda_LM_step_red)/lambda_LM_step_red
+
+plot(LM_step_red)
+
+#Prediction; Model check 
+LM_step_check_red = round(as.matrix(predict(LM_step_red,Data_red_test)),0)
+paste("The accurate rate for Step-Wise is ",round(Check_accurate_rate(Data_red_test,LM_step_check_red),5))
+
+R_sq_LM_red = R2(Data_red_test$quality,LM_step_check_red)
+RMSPE_LM_red = RMSE(Data_red_test$quality,LM_step_check_red)
+MAPE_LM_red = MAE(Data_red_test$quality,LM_step_check_red)
+print(c(R_sq_LM_red,RMSPE_LM_red/sd(Data_red_test$quality),MAPE_LM_red))
+
+table(t(Data_red_test[,1]),LM_step_check_red)
+```
+
+
